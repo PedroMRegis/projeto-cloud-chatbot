@@ -1,0 +1,47 @@
+# Chatbot sozinho, sem custo na AWS: DynamoDB Local no lugar do DynamoDB.
+# Precisa do backend rodando (compose do projeto-cloud-backend, porta 8001).
+# Para a plataforma inteira, use o compose do repositório projeto-cloud-insper.
+#
+#   docker compose up -d --build     chat em http://localhost:8002/api/chat
+
+name: convcommerce-chatbot
+
+x-aws-local: &aws-local
+  AWS_REGION: us-east-2
+  AWS_ACCESS_KEY_ID: local
+  AWS_SECRET_ACCESS_KEY: local
+  DYNAMODB_ENDPOINT: http://dynamodb:8000
+  APP_ENV: local
+
+services:
+  dynamodb:
+    image: amazon/dynamodb-local:2.5.3
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
+    ports: ["8003:8000"]
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8000 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  tables:
+    build: .
+    entrypoint: ["python", "/srv/scripts/provision_tables.py"]
+    environment: *aws-local
+    depends_on:
+      dynamodb: {condition: service_healthy}
+    restart: "no"
+
+  chatbot:
+    build: .
+    ports: ["8002:8000"]
+    environment:
+      <<: *aws-local
+      BACKEND_URL: ${BACKEND_URL:-http://host.docker.internal:8001}
+      # mock = vendedor guiado, sem consumir cota de LLM.
+      LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+    depends_on:
+      tables: {condition: service_completed_successfully}
+    restart: unless-stopped

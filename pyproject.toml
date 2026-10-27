@@ -1,0 +1,30 @@
+[project]
+name = "convcommerce-chatbot"
+version = "0.2.0"
+description = "Vendedor conversacional da livraria: LLM com tool calling e modo guiado"
+requires-python = ">=3.12"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+filterwarnings = [
+  "error::DeprecationWarning:app.*",
+  "ignore::DeprecationWarning:botocore.*",
+  "ignore::DeprecationWarning:starlette.*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RET", "ARG"]
+ignore = [
+  "B008",    # Field() em default de argumento é o idioma do FastAPI/pydantic
+  "SIM105",  # contextlib.suppress esconde o motivo; try/except explícito é mais claro
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["ARG001", "ARG002", "ARG005", "E501"]
