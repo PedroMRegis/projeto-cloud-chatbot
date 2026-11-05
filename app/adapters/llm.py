@@ -11,11 +11,11 @@ A IA é tratada como dependência sujeita a latência, falhas e limites
    API converte em resposta degradada com HTTP 200, nunca em 5xx.
 
 Gemini e Groq são usados pelo endpoint compatível com OpenAI, então um único SDK
-(`openai`) atende aos dois (PLANO D-26). O Bedrock usa o SDK da Anthropic, e a
-autenticação é a credencial AWS da task (task role), sem chave no ambiente.
+(`openai`) atende aos dois (PLANO D-26). O Bedrock usa a API Converse do boto3, e
+a autenticação é a credencial AWS da task (task role), sem chave no ambiente.
 
 O formato interno das mensagens continua sendo o da OpenAI: é ele que permite
-trocar de provedor no meio de um turno. `_to_anthropic` e `_to_chat_completion`
+trocar de provedor no meio de um turno. `_to_converse` e `_to_chat_completion`
 convertem na entrada e na saída do Bedrock, então o agente quase não muda.
 """
 
@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+from app.adapters.aws import bedrock_client
 from app.shared import faults, metrics
 from app.shared.config import settings
 from app.shared.logging import get_logger
@@ -38,6 +39,7 @@ log = get_logger(__name__)
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 BEDROCK = "bedrock"
+REFUSAL_STOP_REASONS = {"refusal", "content_filtered", "guardrail_intervened"}
 
 MAX_ATTEMPTS = 3
 BREAKER_FAILURE_THRESHOLD = 5
@@ -149,59 +151,52 @@ def _client(provider: ProviderConfig) -> Any:
         return _clients[provider.name]
 
 
-def _bedrock_client() -> Any:
-    from anthropic import AnthropicBedrockMantle
-
-    with _clients_lock:
-        if BEDROCK not in _clients:
-            cfg = settings()
-            _clients[BEDROCK] = AnthropicBedrockMantle(
-                aws_region=cfg.bedrock_region or cfg.region,
-                timeout=cfg.llm_timeout_s,
-                max_retries=0,  # o retry é nosso, para contar métrica por tentativa
-            )
-        return _clients[BEDROCK]
-
-
-def _anthropic_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {
-            "name": tool["function"]["name"],
-            "description": tool["function"]["description"],
-            "input_schema": tool["function"]["parameters"],
-        }
-        for tool in tools
-    ]
+def _converse_tools(tools: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "tools": [
+            {
+                "toolSpec": {
+                    "name": tool["function"]["name"],
+                    "description": tool["function"]["description"],
+                    "inputSchema": {"json": tool["function"]["parameters"]},
+                }
+            }
+            for tool in tools
+        ]
+    }
 
 
-def _assistant_blocks(message: dict[str, Any]) -> Any:
-    # Blocos originais do Bedrock: os de thinking precisam voltar intactos junto
+def _assistant_blocks(message: dict[str, Any]) -> list[dict[str, Any]]:
+    # Blocos originais do Bedrock: os de raciocínio precisam voltar intactos junto
     # com o resultado das tools. Só o que veio de outro provedor é reconstruído.
     if message.get("native_content"):
         return message["native_content"]
     blocks: list[dict[str, Any]] = []
     if message.get("content"):
-        blocks.append({"type": "text", "text": message["content"]})
+        blocks.append({"text": message["content"]})
     for call in message.get("tool_calls") or []:
         blocks.append({
-            "type": "tool_use",
-            "id": call["id"],
-            "name": call["function"]["name"],
-            "input": json.loads(call["function"]["arguments"] or "{}"),
+            "toolUse": {
+                "toolUseId": call["id"],
+                "name": call["function"]["name"],
+                "input": json.loads(call["function"]["arguments"] or "{}"),
+            }
         })
     return blocks
 
 
-def _to_anthropic(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
-    """Mensagens no formato OpenAI → (`system`, `messages`) da Messages API."""
-    system: list[str] = []
+def _to_converse(
+    messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """Mensagens no formato OpenAI → (`system`, `messages`) da API Converse."""
+    system: list[dict[str, str]] = []
     converted: list[dict[str, Any]] = []
-    results: list[dict[str, Any]] | None = None  # bloco de tool_result em aberto
+    results: list[dict[str, Any]] | None = None  # bloco de toolResult em aberto
     for message in messages:
         role = message["role"]
         if role == "tool":
-            result = {"type": "tool_result", "tool_use_id": message["tool_call_id"],
-                      "content": message["content"]}
+            result = {"toolResult": {"toolUseId": message["tool_call_id"],
+                                     "content": [{"text": message["content"]}]}}
             # Todos os resultados de um turno vão numa única mensagem de usuário.
             if results is None:
                 results = []
@@ -210,32 +205,34 @@ def _to_anthropic(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, A
             continue
         results = None
         if role == "system":
-            system.append(message["content"])
+            system.append({"text": message["content"]})
         elif role == "user":
-            converted.append({"role": "user", "content": message["content"]})
+            converted.append({"role": "user", "content": [{"text": message["content"]}]})
         elif converted:
             # A conversa precisa começar pelo usuário: o histórico é um recorte
             # das últimas mensagens e pode começar numa resposta do vendedor.
             converted.append({"role": "assistant", "content": _assistant_blocks(message)})
-    return "\n\n".join(system), converted
+    return system, converted
 
 
-def _to_chat_completion(response: Any) -> Any:
-    """Resposta da Messages API → o formato de chat completion que o agente lê."""
+def _to_chat_completion(response: dict[str, Any]) -> Any:
+    """Resposta da Converse → o formato de chat completion que o agente lê."""
+    blocks = response["output"]["message"]["content"]
     calls = [
         SimpleNamespace(
-            id=block.id,
+            id=block["toolUse"]["toolUseId"],
             function=SimpleNamespace(
-                name=block.name, arguments=json.dumps(block.input, ensure_ascii=False)
+                name=block["toolUse"]["name"],
+                arguments=json.dumps(block["toolUse"]["input"], ensure_ascii=False),
             ),
         )
-        for block in response.content
-        if block.type == "tool_use"
+        for block in blocks
+        if "toolUse" in block
     ]
     message = SimpleNamespace(
-        content="".join(b.text for b in response.content if b.type == "text"),
+        content="".join(b["text"] for b in blocks if "text" in b),
         tool_calls=calls or None,
-        native_content=response.content,
+        native_content=blocks,
     )
     return SimpleNamespace(choices=[SimpleNamespace(message=message)])
 
@@ -244,17 +241,18 @@ def _call_bedrock(
     provider: ProviderConfig, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
 ) -> Any:
     cfg = settings()
-    system, converted = _to_anthropic(messages)
+    system, converted = _to_converse(messages)
+    kwargs: dict[str, Any] = {"toolConfig": _converse_tools(tools)} if tools else {}
     # Sem `temperature`: o Claude Haiku 5.5 recusa valores diferentes do padrão.
-    response = _bedrock_client().messages.create(
-        model=provider.model,
-        max_tokens=cfg.bedrock_max_tokens,
+    response = bedrock_client().converse(
+        modelId=provider.model,
         system=system,
         messages=converted,
-        tools=_anthropic_tools(tools),
-        output_config={"effort": cfg.bedrock_effort},
+        inferenceConfig={"maxTokens": cfg.bedrock_max_tokens},
+        additionalModelRequestFields={"output_config": {"effort": cfg.bedrock_effort}},
+        **kwargs,
     )
-    if response.stop_reason == "refusal":
+    if response["stopReason"] in REFUSAL_STOP_REASONS:
         raise ModelRefused(provider.name)
     return _to_chat_completion(response)
 
@@ -277,7 +275,11 @@ def _is_retryable(exc: Exception) -> bool:
         return False
     status = getattr(exc, "status_code", None)
     if status is None:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
+        response = getattr(exc, "response", None)
+        if isinstance(response, dict):  # ClientError do boto3
+            status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+        else:
+            status = getattr(response, "status_code", None)
     if status is not None:
         return status == 429 or status >= 500
     # Timeout e erro de conexão não têm status e valem retry.

@@ -86,26 +86,28 @@ plataforma inteira, use o compose do `projeto-cloud-insper`.
 
 ### Bedrock
 
-Com `LLM_PROVIDER=bedrock`, o vendedor usa o Claude Haiku 5.5 pelo endpoint
-Mantle do Bedrock (`anthropic.claude-haiku-5-5`, na região de `AWS_REGION`).
+Com `LLM_PROVIDER=bedrock`, o vendedor usa o Claude Haiku 5.5 pela API Converse do
+`bedrock-runtime`. O modelo só aceita perfil de inferência, e o padrão é o global,
+que funciona tanto em Ohio quanto em São Paulo.
 
 | Variável | Padrão | Para quê |
 |---|---|---|
-| `BEDROCK_MODEL` | `anthropic.claude-haiku-5-5` | ID do modelo |
+| `BEDROCK_MODEL` | `global.anthropic.claude-haiku-5-5` | Perfil de inferência |
 | `BEDROCK_REGION` | vazio (usa `AWS_REGION`) | Região do Bedrock, se for diferente da do serviço |
 | `BEDROCK_EFFORT` | `medium` | `low` a `max`: quanto o modelo raciocina |
 | `BEDROCK_MAX_TOKENS` | `16000` | Teto da resposta, incluindo o raciocínio |
 
-Na AWS não há chave: a autenticação é a task role do ECS, que precisa da permissão
-`bedrock-mantle:CreateInference` no modelo. O acesso ao modelo também precisa estar
-liberado em *Bedrock → Model access*. Em local, o compose usa credenciais AWS falsas
-para o DynamoDB Local, então defina `AWS_BEARER_TOKEN_BEDROCK` no `.env`.
+Na AWS não há chave: a autenticação é a task role do ECS, que precisa de
+`bedrock:InvokeModel` no perfil de inferência e no modelo em todas as regiões do
+perfil. O compose local usa credenciais AWS falsas para o DynamoDB Local, então
+continua em `mock`. Para testar o Bedrock em local, rode o `uvicorn` fora do compose,
+com `AWS_PROFILE` definido.
 
 ### Testes
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest      # 65 testes, sem AWS e sem Docker (moto + backend falso)
+.venv/Scripts/python -m pytest      # 66 testes, sem AWS e sem Docker (moto + backend falso)
 .venv/Scripts/python -m ruff check .
 ```
 

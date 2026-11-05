@@ -48,8 +48,10 @@ class Settings:
     groq_model: str = field(
         default_factory=lambda: _env("GROQ_MODEL", "llama-3.3-70b-versatile")
     )
+    # Perfil de inferência global: o Haiku 5.5 não aceita o ID do modelo direto, e
+    # o perfil `us.` não serviria em São Paulo.
     bedrock_model: str = field(
-        default_factory=lambda: _env("BEDROCK_MODEL", "anthropic.claude-haiku-5-5")
+        default_factory=lambda: _env("BEDROCK_MODEL", "global.anthropic.claude-haiku-5-5")
     )
     # Vazio = a mesma região do resto do serviço (AWS_REGION).
     bedrock_region: str = field(default_factory=lambda: _env("BEDROCK_REGION", ""))
