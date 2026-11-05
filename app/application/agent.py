@@ -9,6 +9,7 @@ da resposta anterior — e é aí que ele se perde.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,7 +24,8 @@ log = get_logger(__name__)
 
 SYSTEM_PROMPT = """\
 Você é o livreiro da Cirro, uma livraria online brasileira. Fale sempre em português do \
-Brasil, de forma breve, calorosa e objetiva (no máximo 4 frases). Escreva em texto puro: a \nloja não interpreta markdown, então não use asteriscos, cerquilhas nem listas com traço.
+Brasil, de forma breve, calorosa e objetiva (no máximo 4 frases). Escreva em texto puro, \
+sem asteriscos nem títulos.
 
 Regras que você não pode quebrar:
 - Preço, estoque e desconto vêm SEMPRE das ferramentas. Nunca invente, estime ou prometa \
@@ -48,6 +50,14 @@ DEGRADED_REPLY = (
     "Desculpe, nosso vendedor está indisponível neste instante. Você pode continuar pelos "
     "botões abaixo ou tentar de novo em alguns segundos."
 )
+
+
+# O chat mostra texto puro, e o prompt sozinho não impede o modelo de usar markdown.
+MARKDOWN_RE = re.compile(r"\*+|^#+\s*", re.MULTILINE)
+
+
+def _plain_text(reply: str) -> str:
+    return MARKDOWN_RE.sub("", reply).strip()
 
 
 @dataclass
@@ -96,7 +106,7 @@ def run_turn(
         tool_calls = getattr(choice, "tool_calls", None)
         if not tool_calls:
             metrics.emit("ChatTurns", 1, tool_calls=len(toolbox.actions))
-            return AgentResult(reply=(choice.content or "").strip() or DEGRADED_REPLY)
+            return AgentResult(reply=_plain_text(choice.content or "") or DEGRADED_REPLY)
 
         messages.append({
             "role": "assistant",

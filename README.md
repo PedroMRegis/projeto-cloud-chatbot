@@ -107,7 +107,7 @@ com `AWS_PROFILE` definido.
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest      # 66 testes, sem AWS e sem Docker (moto + backend falso)
+.venv/Scripts/python -m pytest      # 67 testes, sem AWS e sem Docker (moto + backend falso)
 .venv/Scripts/python -m ruff check .
 ```
 

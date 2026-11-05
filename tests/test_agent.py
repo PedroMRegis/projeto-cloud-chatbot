@@ -100,3 +100,9 @@ def test_llm_fora_degrada_mas_mantem_os_botoes(
     # E a compra segue pelos botões, sem LLM.
     r = chat.click("Clássicos")
     assert r["stage"] == "browsing"
+
+
+def test_resposta_chega_sem_markdown(chat: Chat, llm_mode: ScriptedLLM) -> None:
+    llm_mode.script.append(response("# Indicação\nLeve **1984**, de *George Orwell*."))
+    r = chat.say("me indica um livro")
+    assert r["reply"] == "Indicação\nLeve 1984, de George Orwell."
