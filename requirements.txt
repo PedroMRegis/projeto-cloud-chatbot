@@ -4,3 +4,4 @@ pydantic==2.10.4
 boto3==1.35.92
 httpx==0.28.1
 openai==1.59.6
+anthropic[bedrock]==2.5.0

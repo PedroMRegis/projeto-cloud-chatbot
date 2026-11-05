@@ -48,7 +48,7 @@ def configure_logging() -> None:
     root.setLevel(settings().log_level.upper())
     # O access log do uvicorn duplicaria o que já registramos no middleware.
     logging.getLogger("uvicorn.access").disabled = True
-    for noisy in ("botocore", "boto3", "urllib3", "httpx", "openai"):
+    for noisy in ("botocore", "boto3", "urllib3", "httpx", "httpx2", "openai", "anthropic"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

@@ -41,12 +41,23 @@ class Settings:
         default_factory=lambda: _env_float("BACKEND_TIMEOUT_S", 5.0)
     )
 
-    # LLM: "gemini" (primário, com fallback groq), "groq" ou "mock".
+    # LLM: "bedrock" (primário, com fallback gemini/groq se houver chave),
+    # "gemini" (primário, com fallback groq), "groq" ou "mock".
     llm_provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "mock"))
     gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.0-flash"))
     groq_model: str = field(
         default_factory=lambda: _env("GROQ_MODEL", "llama-3.3-70b-versatile")
     )
+    bedrock_model: str = field(
+        default_factory=lambda: _env("BEDROCK_MODEL", "anthropic.claude-haiku-5-5")
+    )
+    # Vazio = a mesma região do resto do serviço (AWS_REGION).
+    bedrock_region: str = field(default_factory=lambda: _env("BEDROCK_REGION", ""))
+    # Inclui o thinking do modelo, por isso bem acima do tamanho de uma resposta.
+    bedrock_max_tokens: int = field(
+        default_factory=lambda: _env_int("BEDROCK_MAX_TOKENS", 16000)
+    )
+    bedrock_effort: str = field(default_factory=lambda: _env("BEDROCK_EFFORT", "medium"))
     llm_timeout_s: int = field(default_factory=lambda: _env_int("LLM_TIMEOUT_S", 20))
     llm_max_tool_iterations: int = field(
         default_factory=lambda: _env_int("LLM_MAX_TOOL_ITERATIONS", 6)

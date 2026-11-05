@@ -106,6 +106,9 @@ def run_turn(
                  "function": {"name": call.function.name, "arguments": call.function.arguments}}
                 for call in tool_calls
             ],
+            # Só o Bedrock preenche: blocos de thinking que têm de voltar intactos.
+            **({"native_content": choice.native_content}
+               if getattr(choice, "native_content", None) else {}),
         })
         for call in tool_calls:
             result = toolbox.call(call.function.name, _tool_arguments(call.function.arguments))

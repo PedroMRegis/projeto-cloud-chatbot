@@ -38,7 +38,7 @@ funcionando.
 |---|---|---|
 | Botão (`action`) | Vendedor guiado (`seller.py`) | Sem ambiguidade. Funciona até com o LLM fora do ar |
 | Texto, `LLM_PROVIDER=mock` | Vendedor guiado, interpretando o texto pela etapa | Sem custo de LLM; usado em teste de carga |
-| Texto, `LLM_PROVIDER=gemini`/`groq` | LLM com tool calling (`agent.py`) | Recebe histórico **e** um resumo do estado (livro em foco, `quote_id`, nome) |
+| Texto, `LLM_PROVIDER=bedrock`/`gemini`/`groq` | LLM com tool calling (`agent.py`) | Recebe histórico **e** um resumo do estado (livro em foco, `quote_id`, nome) |
 
 As tools (`search_products`, `get_product`, `check_availability`,
 `create_quote`, `confirm_order`, `get_order_status`) são chamadas HTTP ao
@@ -47,7 +47,7 @@ teto.
 
 ## Resiliência
 
-- **LLM:** timeout de 20 s, retry com jitter, circuit breaker por provedor e fallback Gemini → Groq. Se tudo falhar, a resposta é degradada (HTTP 200) e os botões continuam vendendo.
+- **LLM:** timeout de 20 s, retry com jitter, circuit breaker por provedor e fallback Bedrock → Gemini → Groq (Gemini e Groq só com chave configurada). Se tudo falhar, a resposta é degradada (HTTP 200) e os botões continuam vendendo.
 - **Backend:** timeout de 5 s, retry em erro de conexão e 502/503/504, circuit breaker (5 falhas em 30 s abrem o circuito por 15 s). Com o backend fora, o turno degrada com uma explicação e o `request_id` é liberado para o cliente tentar de novo.
 - **Idempotência:** o `request_id` repetido devolve a resposta guardada, sem chamar o LLM de novo e sem segundo pedido.
 - **Rate limit:** 20 mensagens/min por conversa, para proteger a cota do LLM.
@@ -84,11 +84,28 @@ docker compose up -d --build     # DynamoDB Local + chatbot (precisa do backend 
 Para usar um LLM real, copie `.env.example` para `.env` e preencha as chaves. Para a
 plataforma inteira, use o compose do `projeto-cloud-insper`.
 
+### Bedrock
+
+Com `LLM_PROVIDER=bedrock`, o vendedor usa o Claude Haiku 5.5 pelo endpoint
+Mantle do Bedrock (`anthropic.claude-haiku-5-5`, na região de `AWS_REGION`).
+
+| Variável | Padrão | Para quê |
+|---|---|---|
+| `BEDROCK_MODEL` | `anthropic.claude-haiku-5-5` | ID do modelo |
+| `BEDROCK_REGION` | vazio (usa `AWS_REGION`) | Região do Bedrock, se for diferente da do serviço |
+| `BEDROCK_EFFORT` | `medium` | `low` a `max`: quanto o modelo raciocina |
+| `BEDROCK_MAX_TOKENS` | `16000` | Teto da resposta, incluindo o raciocínio |
+
+Na AWS não há chave: a autenticação é a task role do ECS, que precisa da permissão
+`bedrock-mantle:CreateInference` no modelo. O acesso ao modelo também precisa estar
+liberado em *Bedrock → Model access*. Em local, o compose usa credenciais AWS falsas
+para o DynamoDB Local, então defina `AWS_BEARER_TOKEN_BEDROCK` no `.env`.
+
 ### Testes
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest      # 52 testes, sem AWS e sem Docker (moto + backend falso)
+.venv/Scripts/python -m pytest      # 65 testes, sem AWS e sem Docker (moto + backend falso)
 .venv/Scripts/python -m ruff check .
 ```
 

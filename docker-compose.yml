@@ -40,6 +40,7 @@ services:
       BACKEND_URL: ${BACKEND_URL:-http://host.docker.internal:8001}
       # mock = vendedor guiado, sem consumir cota de LLM.
       LLM_PROVIDER: ${LLM_PROVIDER:-mock}
+      AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GROQ_API_KEY: ${GROQ_API_KEY:-}
     depends_on:
