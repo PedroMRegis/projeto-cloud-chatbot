@@ -111,6 +111,7 @@ def handle_turn(
     request_id: str,
     message: str,
     action: dict[str, Any] | None = None,
+    user_id: str | None = None,
 ) -> ChatResponse:
     cfg = settings()
     conversations = ConversationRepository()
@@ -129,7 +130,7 @@ def handle_turn(
         raise RequestInFlight(request_id)
 
     try:
-        return _run(conversations, conversation_id, request_id, message, action)
+        return _run(conversations, conversation_id, request_id, message, action, user_id)
     except Exception:
         conversations.release_request(conversation_id, request_id)
         raise
@@ -141,6 +142,7 @@ def _run(
     request_id: str,
     message: str,
     action: dict[str, Any] | None,
+    user_id: str | None,
 ) -> ChatResponse:
     cfg = settings()
     history = conversations.history(conversation_id, limit=HISTORY_TURNS * 2)
@@ -197,6 +199,10 @@ def _run(
                                  ui=response.ui(),
                                  tools=[a["tool"] for a in toolbox.actions] or None)
     conversations.save_state(conversation_id, session.dump())
+    if user_id:
+        first_message = history[0].get("content", message) if history else message
+        conversations.index_for_user(user_id, conversation_id, title=first_message,
+                                     last_message=reply, stage=session.stage)
     cached = {k: v for k, v in response.to_dict().items() if k not in ("replayed", "order_id")}
     conversations.save_response(conversation_id, request_id, cached)
     metrics.emit("ChatTurns", 1, dim_mode=mode, stage=session.stage)

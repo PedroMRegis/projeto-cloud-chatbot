@@ -33,6 +33,21 @@ def ssm_client() -> Any:
     return boto3.client("ssm", region_name=settings().region, config=_BOTO_CONFIG)
 
 
+@lru_cache(maxsize=1)
+def bedrock_client() -> Any:
+    cfg = settings()
+    # O retry do LLM é o nosso (app/adapters/llm.py), para contar métrica por tentativa.
+    config = Config(
+        retries={"total_max_attempts": 1, "mode": "standard"},
+        connect_timeout=3,
+        read_timeout=cfg.llm_timeout_s,
+        user_agent_extra="convcommerce",
+    )
+    return boto3.client(
+        "bedrock-runtime", region_name=cfg.bedrock_region or cfg.region, config=config
+    )
+
+
 def reset_clients() -> None:
-    for factory in (dynamodb_resource, ssm_client):
+    for factory in (dynamodb_resource, ssm_client, bedrock_client):
         factory.cache_clear()
