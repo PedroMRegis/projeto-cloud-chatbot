@@ -78,7 +78,7 @@ def test_cotacao_feita_pelo_llm_vira_botao_de_confirmar(
     assert r["stage"] == "quoted"
     # O botão é tratado pelo vendedor guiado: funciona mesmo que o LLM caia depois.
     r = chat.click("Confirmar pedido")
-    assert r["stage"] == "awaiting_name"
+    assert r["stage"] == "ordered"
 
 
 def test_llm_fora_degrada_mas_mantem_os_botoes(

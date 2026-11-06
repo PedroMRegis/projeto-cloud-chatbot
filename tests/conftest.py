@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import itertools
 import sys
+import time
 import unicodedata
 import uuid
 from collections.abc import Iterator
@@ -16,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 import boto3
+import jwt
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -108,6 +110,7 @@ class FakeBackend:
         self.orders: dict[str, dict[str, Any]] = {}
         self.calls: list[str] = []
         self.down = False
+        self.account_name: str | None = "Ana Lima"
         self._ids = itertools.count(1)
 
     def _check(self, name: str) -> None:
@@ -116,6 +119,10 @@ class FakeBackend:
         self.calls.append(name)
         if self.down:
             raise BackendUnavailable("fake fora do ar")
+
+    def current_user(self) -> dict[str, Any]:
+        self._check("me")
+        return {"name": self.account_name}
 
     def search_products(self, query: str, category: str | None = None,
                         limit: int = 5) -> dict[str, Any]:
@@ -166,8 +173,7 @@ class FakeBackend:
         self.quotes[quote_id] = quote
         return quote
 
-    def place_order(self, quote_id: str, conversation_id: str,
-                    customer_name: str) -> dict[str, Any]:
+    def place_order(self, quote_id: str, conversation_id: str) -> dict[str, Any]:
         from app.adapters.backend import BackendError
 
         self._check("order")
@@ -177,7 +183,7 @@ class FakeBackend:
         if quote_id in self.orders:
             return {**self.orders[quote_id], "created": False}
         order = {"order_id": quote_id, "status": "PENDING", "total": quote["total"],
-                 "items": quote["items"], "customer_name": customer_name,
+                 "items": quote["items"], "customer_name": self.account_name,
                  "conversation_id": conversation_id}
         self.orders[quote_id] = order
         return {**order, "created": True}
@@ -193,7 +199,7 @@ def fake_backend(monkeypatch: pytest.MonkeyPatch) -> FakeBackend:
 
     fake = FakeBackend()
     for name in ("search_products", "get_product", "check_availability", "create_quote",
-                 "place_order", "get_order"):
+                 "place_order", "get_order", "current_user"):
         monkeypatch.setattr(backend, name, getattr(fake, name))
     monkeypatch.setattr(backend, "health", lambda: not fake.down)
     return fake
@@ -209,11 +215,21 @@ def api(dynamo: Any, fake_backend: FakeBackend) -> Iterator[Any]:
         yield client
 
 
+def session_headers(user_id: str) -> dict[str, str]:
+    token = jwt.encode(
+        {"sub": user_id, "iss": "cirro-backend", "aud": "cirro-web",
+         "exp": int(time.time()) + 3600},
+        "segredo-de-teste-com-mais-de-trinta-e-dois-bytes", algorithm="HS256",
+    )
+    return {"Cookie": f"cirro_session={token}"}
+
+
 class Chat:
     """Conversa de teste: mantém conversation_id e gera request_id a cada envio."""
 
     def __init__(self, client: Any) -> None:
         self.client = client
+        self.headers = session_headers("conta-de-teste")
         self.conversation_id: str | None = None
         self.last: dict[str, Any] = {}
 
@@ -225,7 +241,7 @@ class Chat:
             payload["conversation_id"] = self.conversation_id
         if action:
             payload["action"] = action
-        response = self.client.post("/api/chat", json=payload)
+        response = self.client.post("/api/chat", json=payload, headers=self.headers)
         assert response.status_code == 200, response.text
         self.last = response.json()
         self.conversation_id = self.last["conversation_id"]
@@ -242,4 +258,5 @@ class Chat:
 
 @pytest.fixture
 def chat(api: Any) -> Chat:
+    """Cliente logado."""
     return Chat(api)

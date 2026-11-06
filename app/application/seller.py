@@ -22,7 +22,6 @@ import unicodedata
 from typing import Any
 
 from app.application.session import (
-    AWAITING_NAME,
     BROWSING,
     IDLE,
     ORDERED,
@@ -59,11 +58,6 @@ QTY_VERB_RE = re.compile(
 )
 BARE_NUMBER_RE = re.compile(r"^\s*(?:o\s+|a\s+|numero\s+)?(\d{1,2})\s*[.!?]?\s*$")
 PCT_RE = re.compile(r"(\d{1,2})\s*(?:%|por\s*cento)")
-NAME_RE = re.compile(
-    r"(?:meu nome (?:é|e)|me chamo|pode colocar|coloca|sou (?:o|a)|nome:?)\s+"
-    r"([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ'.\- ]{1,58})",
-    re.IGNORECASE,
-)
 
 AFFIRM_START = {"sim", "s", "ss", "quero", "queria", "pode", "isso", "claro", "ok", "okay",
                 "beleza", "blz", "bora", "fechado", "fecha", "fechar", "confirmo", "confirmar",
@@ -122,15 +116,7 @@ def _is_deny(text: str) -> bool:
     return bool(tokens) and tokens[0] in DENY_START
 
 
-def _extract_name(text: str) -> str | None:
-    match = NAME_RE.search(text)
-    if not match:
-        return None
-    name = re.split(r"[,.!?;]| e (?:quero|pode)", match.group(1))[0]
-    return _clean_name(name)
-
-
-def _clean_name(raw: str) -> str | None:
+def clean_name(raw: str) -> str | None:
     name = " ".join(raw.strip().split()[:5])
     if not 2 <= len(name) <= 60 or any(ch.isdigit() for ch in name):
         return None
@@ -195,9 +181,6 @@ class Seller:
             return self.request_discount(action.get("discount_pct"))
         if kind == "confirm":
             return self.confirm()
-        if kind == "set_name" and action.get("name"):
-            name = _clean_name(str(action["name"]))
-            return self.place(name) if name else self.ask_name()
         if kind == "details":
             return self.details()
         if kind == "order_status":
@@ -240,16 +223,6 @@ class Seller:
         if s.order and STATUS_RE.search(folded) and s.stage in (ORDERED, IDLE):
             return self.order_status()
 
-        if s.stage == AWAITING_NAME:
-            if _is_deny(text):
-                return self.back()
-            name = _extract_name(text) or _clean_name(text)
-            return self.place(name) if name else self.ask_name(retry=True)
-
-        name = _extract_name(text)
-        if name:
-            s.customer_name = name
-
         if s.product and DETAILS_RE.search(folded) and s.stage in (PRODUCT, QUOTED):
             return self.details()
 
@@ -278,7 +251,7 @@ class Seller:
         if SURPRISE_RE.search(folded) and len(tokens) <= 8:
             return self.surprise()
 
-        if s.stage == QUOTED and name and re.search(r"(fecha|confirm|registr|pode)", folded):
+        if s.stage == QUOTED and re.search(r"(fecha|confirm|registr)", folded):
             return self.confirm()
 
         reply = self.search(_clean_query(text))
@@ -335,8 +308,7 @@ class Seller:
         if s.stage in (PRODUCT, QUOTED) and s.product:
             return (f"Olá! Seguimos com “{s.product['title']}”? Posso cotar, dar desconto "
                     "ou buscar outro.")
-        if s.stage not in (AWAITING_NAME,):
-            s.stage = IDLE
+        s.stage = IDLE
         return ("Olá! Sou o livreiro da Cirro. Posso procurar por título, autor ou assunto, "
                 "montar uma cotação com desconto e registrar o seu pedido. Por onde começamos?")
 
@@ -344,7 +316,7 @@ class Seller:
         return ("Funciona assim: você me diz o que procura (\"um romance brasileiro\", "
                 "\"Tolkien\", \"livro sobre hábitos\"), eu mostro as opções, você escolhe a "
                 "quantidade, eu monto a cotação — a partir de 3 exemplares tem desconto — e, com "
-                "o seu nome, registro o pedido. Também dá para usar os botões abaixo.")
+                "a sua conta, registro o pedido. Também dá para usar os botões abaixo.")
 
     def search(self, query: str, *, category: str | None = None) -> str:
         s = self.s
@@ -500,39 +472,39 @@ class Seller:
             if s.stage == PRODUCT:
                 return self.quote(s.quantity or 1)
             return "Ainda não temos uma cotação. Qual livro você quer?"
-        if not s.customer_name:
-            return self.ask_name()
-        return self.place(s.customer_name)
+        if not self.tools.logged_in:
+            return self.ask_login()
+        return self.place()
 
-    def ask_name(self, retry: bool = False) -> str:
-        self.s.stage = AWAITING_NAME
-        if retry:
-            return "Não consegui entender o nome. Pode digitar só o nome e o sobrenome?"
-        return "Perfeito! Para registrar, qual nome coloco no pedido?"
+    def ask_login(self) -> str:
+        """A cotação fica guardada: depois do login, é só confirmar."""
+        self.tools.login_required = True
+        self.s.stage = QUOTED
+        return ("Para concluir o pedido, entre na sua conta ou crie uma. "
+                "Sua cotação fica guardada aqui nesta conversa.")
 
-    def place(self, name: str | None) -> str:
+    def place(self) -> str:
         s = self.s
-        if not name:
-            return self.ask_name(retry=True)
         if not s.quote:
             s.stage = IDLE
             return "Não encontrei a cotação. Vamos montar de novo? Qual livro você quer?"
-        result = self.tools.call("confirm_order",
-                                 {"quote_id": s.quote["quote_id"], "customer_name": name})
+        result = self.tools.call("confirm_order", {"quote_id": s.quote["quote_id"]})
         if "error" in result:
+            if result.get("status") == 401:
+                return self.ask_login()
             if result.get("status") == 409:  # cotação expirou: refaz com preço atual
                 discount = int(s.quote.get("discount_pct") or 0)
-                s.customer_name = name
                 reply = self.quote(s.quantity, discount)
                 return "A cotação anterior expirou e eu refiz com os preços de agora. " + reply
             s.stage = IDLE
             return f"Não consegui registrar o pedido: {result['error']}"
 
-        s.customer_name, s.order, s.stage = name, result, ORDERED
+        s.order, s.stage = result, ORDERED
         short = _short_id(result["order_id"])
         if result.get("already_existed"):
             return f"Esse pedido já estava registrado: nº {short}, total {result['total']}."
-        return (f"Pedido registrado, {_first_name(name)}! Número {short}, total {result['total']}. "
+        greeting = f", {_first_name(s.customer_name)}" if s.customer_name else ""
+        return (f"Pedido registrado{greeting}! Número {short}, total {result['total']}. "
                 "Agora o estoque é confirmado em alguns segundos — acompanhe o status aqui.")
 
     def order_status(self) -> str:
@@ -554,10 +526,6 @@ class Seller:
 
     def back(self) -> str:
         s = self.s
-        if s.stage == AWAITING_NAME and s.quote:
-            s.stage = QUOTED
-            return (f"Certo. A cotação de {s.quote['total']} continua de pé. "
-                    "Posso ajudar em algo mais?")
         if len(s.candidates) > 1:
             s.stage, s.product, s.quote = BROWSING, None, None
             lines = [f"{i}. “{c['title']}”" for i, c in enumerate(s.candidates[:5], start=1)]

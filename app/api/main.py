@@ -114,7 +114,7 @@ def ready() -> JSONResponse:
 
 ActionType = Literal[
     "select_product", "set_quantity", "change_quantity", "request_discount", "confirm",
-    "set_name", "details", "order_status", "browse_category", "search", "surprise", "back",
+    "details", "order_status", "browse_category", "search", "surprise", "back",
     "cancel", "reset", "start",
 ]
 
@@ -128,7 +128,6 @@ class ChatAction(BaseModel):
     discount_pct: int | None = Field(default=None, ge=0, le=100)
     category: str | None = Field(default=None, max_length=60)
     query: str | None = Field(default=None, max_length=200)
-    name: str | None = Field(default=None, max_length=80)
 
 
 class ChatRequest(BaseModel):

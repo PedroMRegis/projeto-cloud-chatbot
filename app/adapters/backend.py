@@ -191,16 +191,21 @@ def create_quote(conversation_id: str, items: list[dict[str, Any]],
     })
 
 
-def place_order(quote_id: str, conversation_id: str, customer_name: str) -> dict[str, Any]:
+def place_order(quote_id: str, conversation_id: str) -> dict[str, Any]:
+    """O nome do pedido o backend tira da conta da sessão."""
     return request("POST", "/api/orders", json={
         "quote_id": quote_id, "conversation_id": conversation_id,
-        "customer_name": customer_name,
     })
 
 
 def get_order(order_id: str, conversation_id: str) -> dict[str, Any]:
     return request("GET", f"/api/orders/{order_id}",
                    params={"conversation_id": conversation_id})
+
+
+def current_user() -> dict[str, Any]:
+    """A conta da sessão repassada no `Authorization`."""
+    return request("GET", "/api/auth/me")
 
 
 def health() -> bool:

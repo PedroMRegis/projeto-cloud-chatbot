@@ -10,7 +10,7 @@ Agora cada conversa tem um estado persistido (DynamoDB, item `STATE`):
       ▲                                     │                          │ sim
       │                                     ◄────── não/outras ────────┤
       │                                                                ▼
-      └────────────── comprar outro ◄────── ordered ◄── nome ── awaiting_name
+      └────────────── comprar outro ◄────── ordered ◄──── sim, com login ──┘
 
 O estado guarda o livro em foco, a cotação e o pedido, e cada etapa oferece
 **sugestões clicáveis** (com uma `action` estruturada) para o cliente não
@@ -26,10 +26,9 @@ IDLE = "idle"
 BROWSING = "browsing"
 PRODUCT = "product"
 QUOTED = "quoted"
-AWAITING_NAME = "awaiting_name"
 ORDERED = "ordered"
 
-STAGES = (IDLE, BROWSING, PRODUCT, QUOTED, AWAITING_NAME, ORDERED)
+STAGES = (IDLE, BROWSING, PRODUCT, QUOTED, ORDERED)
 
 # Atalhos da tela inicial. `category` casa com o catálogo do backend.
 START_SHORTCUTS: list[tuple[str, str]] = [
@@ -115,7 +114,8 @@ class Session:
             if key in raw and raw[key] is not None:
                 setattr(session, key, raw[key])
         if session.stage not in STAGES:
-            session.stage = IDLE
+            # Conversa antiga que esperava o nome: a cotação continua valendo.
+            session.stage = QUOTED if session.quote else IDLE
         return session
 
     def dump(self) -> dict[str, Any]:
@@ -131,7 +131,6 @@ class Session:
 
     def input_hint(self) -> str:
         return {
-            AWAITING_NAME: "Digite o nome para o pedido",
             QUOTED: "Confirme, peça desconto ou mude a quantidade",
             PRODUCT: "Quantos exemplares?",
         }.get(self.stage, "Pergunte por título, autor ou assunto")
@@ -174,15 +173,6 @@ class Session:
                                           message="E se eu levar 3?"))
             options.append(suggestion("Mudar quantidade", {"type": "change_quantity"}))
             options.append(suggestion("Cancelar", {"type": "cancel"}))
-            return options
-
-        if self.stage == AWAITING_NAME:
-            options = []
-            if self.customer_name:
-                options.append(suggestion(f"Usar \"{self.customer_name}\"",
-                                          {"type": "set_name", "name": self.customer_name},
-                                          message=self.customer_name))
-            options.append(suggestion("Voltar", {"type": "back"}))
             return options
 
         if self.stage == ORDERED and self.order:

@@ -21,11 +21,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.adapters.backend import BackendUnavailable
+from app.adapters import backend
+from app.adapters.backend import BackendError, BackendUnavailable
 from app.adapters.conversations import ConversationRepository
 from app.application import agent
-from app.application.seller import Seller
-from app.application.session import Session
+from app.application.seller import Seller, clean_name
+from app.application.session import QUOTED, Session
 from app.application.tools import ToolBox
 from app.shared import metrics
 from app.shared.config import settings
@@ -64,6 +65,7 @@ class ChatResponse:
     stage: str = "idle"
     degraded: bool = False
     replayed: bool = False
+    login_required: bool = False
 
     @property
     def order_id(self) -> str | None:
@@ -77,6 +79,7 @@ class ChatResponse:
             "suggestions": self.suggestions,
             "input_hint": self.input_hint,
             "stage": self.stage,
+            "login_required": self.login_required,
         }
 
     def to_dict(self) -> dict[str, Any]:
@@ -104,6 +107,22 @@ def _cards(toolbox: ToolBox) -> list[dict[str, Any]]:
     if toolbox.product:
         return [toolbox.product]
     return toolbox.products
+
+
+def _fill_name_from_account(session: Session) -> None:
+    """Quem tem conta não precisa dizer o nome. Um nome dito na conversa tem prioridade.
+
+    Passa pelo mesmo filtro do nome digitado, porque o texto é do cliente e vai para
+    o contexto do LLM. Se a consulta falhar, o vendedor só pergunta o nome, como antes.
+    """
+    if session.customer_name:
+        return
+    try:
+        account = backend.current_user()
+    except (BackendError, BackendUnavailable) as exc:
+        log.warning("nome da conta indisponível", extra={"error": type(exc).__name__})
+        return
+    session.customer_name = clean_name(str(account.get("name") or ""))
 
 
 def handle_turn(
@@ -147,7 +166,9 @@ def _run(
     cfg = settings()
     history = conversations.history(conversation_id, limit=HISTORY_TURNS * 2)
     session = Session.load(conversations.get_state(conversation_id))
-    toolbox = ToolBox(conversation_id)
+    if user_id:
+        _fill_name_from_account(session)
+    toolbox = ToolBox(conversation_id, logged_in=user_id is not None)
     seller = Seller(toolbox, session)
     mode = "action" if action else ("guided" if cfg.llm_provider == "mock" else "llm")
     log.info("turno recebido",
@@ -190,6 +211,8 @@ def _run(
         input_hint=session.input_hint(),
         stage=session.stage,
         degraded=degraded,
+        # O LLM recusa sem chamar a tool, então a cotação aberta também liga os botões.
+        login_required=toolbox.login_required or (user_id is None and session.stage == QUOTED),
     )
 
     index = len(history)

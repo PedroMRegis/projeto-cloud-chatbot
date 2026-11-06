@@ -43,7 +43,7 @@ def test_erro_de_negocio_nao_e_retentado(transport: list[Any]) -> None:
     queue, seen = transport
     queue += [(409, {"detail": "cotação expirada, crie uma nova"})]
     with pytest.raises(backend.BackendError) as err:
-        backend.place_order("q", "c", "Ana")
+        backend.place_order("q", "c")
     assert err.value.status == 409
     assert len(seen) == 1
 

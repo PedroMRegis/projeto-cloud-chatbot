@@ -109,15 +109,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             "name": "confirm_order",
             "description": (
                 "Registra o pedido a partir de uma cotação. Só chame depois de o "
-                "cliente confirmar explicitamente e informar o nome."
+                "cliente confirmar explicitamente. O nome do pedido vem da conta do cliente."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "quote_id": {"type": "string"},
-                    "customer_name": {"type": "string"},
                 },
-                "required": ["quote_id", "customer_name"],
+                "required": ["quote_id"],
             },
         },
     },
@@ -143,8 +142,11 @@ class ToolBox:
     mostrar (cards de livro, cotação, pedido) e o histórico de ações.
     """
 
-    def __init__(self, conversation_id: str) -> None:
+    def __init__(self, conversation_id: str, logged_in: bool) -> None:
         self.conversation_id = conversation_id
+        self.logged_in = logged_in
+        # A interface mostra "Entrar" e "Criar conta" quando isto fica verdadeiro.
+        self.login_required = False
         self.actions: list[dict[str, Any]] = []
         self.products: list[dict[str, Any]] = []
         self.product: dict[str, Any] | None = None
@@ -175,6 +177,7 @@ class ToolBox:
                 log.info("backend recusou a operação",
                          extra={"tool": name, "status": exc.status, "reason": exc.detail})
                 result = {"error": exc.detail, "status": exc.status}
+                self.login_required = self.login_required or exc.status == 401
             except TypeError as exc:
                 # Argumentos inválidos vindos do LLM: devolver como erro é melhor
                 # que estourar, porque o modelo costuma corrigir na iteração seguinte.
@@ -209,8 +212,12 @@ class ToolBox:
         metrics.emit("QuotesRequested", 1, discount_pct=self.quote["discount_pct"])
         return self.quote
 
-    def confirm_order(self, quote_id: str, customer_name: str) -> dict[str, Any]:
-        order = backend.place_order(quote_id, self.conversation_id, customer_name)
+    def confirm_order(self, quote_id: str) -> dict[str, Any]:
+        if not self.logged_in:
+            self.login_required = True
+            return {"error": "o cliente precisa entrar na conta para concluir o pedido",
+                    "status": 401}
+        order = backend.place_order(quote_id, self.conversation_id)
         self.order = order_card(order)
         if order.get("created"):
             metrics.emit("OrdersPlacedByChat", 1)
