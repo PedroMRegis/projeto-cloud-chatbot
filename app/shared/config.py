@@ -76,9 +76,10 @@ class Settings:
     rate_limit_per_minute: int = field(
         default_factory=lambda: _env_int("RATE_LIMIT_PER_MINUTE", 20)
     )
-    conversation_ttl_days: int = field(
-        default_factory=lambda: _env_int("CONVERSATION_TTL_DAYS", 7)
-    )
+    # Só a idempotência expira: as conversas são permanentes.
+    request_ttl_days: int = field(default_factory=lambda: _env_int("REQUEST_TTL_DAYS", 7))
+    # Mesmo valor do backend, que emite a sessão. Sem ele, todos são visitantes.
+    auth_jwt_secret: str = field(default_factory=lambda: _env("AUTH_JWT_SECRET", ""))
 
     @property
     def is_local(self) -> bool:

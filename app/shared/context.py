@@ -15,6 +15,9 @@ _conversation_id: ContextVar[str | None] = ContextVar("conversation_id", default
 _order_id: ContextVar[str | None] = ContextVar("order_id", default=None)
 _traceparent: ContextVar[str | None] = ContextVar("traceparent", default=None)
 
+# Fora de `_FIELDS` de propósito: tudo que está lá vai para os logs.
+_auth_token: ContextVar[str | None] = ContextVar("auth_token", default=None)
+
 _FIELDS = {
     "correlation_id": _correlation_id,
     "conversation_id": _conversation_id,
@@ -44,6 +47,18 @@ def unbind(tokens: dict[str, object]) -> None:
 
 def current() -> dict[str, str]:
     return {key: var.get() for key, var in _FIELDS.items() if var.get()}
+
+
+def bind_auth_token(token: str | None) -> object:
+    return _auth_token.set(token)
+
+
+def unbind_auth_token(reset_token: object) -> None:
+    _auth_token.reset(reset_token)  # type: ignore[arg-type]
+
+
+def auth_token() -> str | None:
+    return _auth_token.get()
 
 
 def correlation_id() -> str | None:

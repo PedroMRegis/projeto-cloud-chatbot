@@ -12,7 +12,8 @@ tratamento:
   responde de forma degradada na hora, em vez de gastar timeout;
 * **propagação de contexto** — `X-Request-Id`, `traceparent` e
   `X-Conversation-Id` seguem para o backend, então os logs dos dois serviços
-  se correlacionam pelo mesmo ID.
+  se correlacionam pelo mesmo ID. A sessão do cliente vai como `Authorization`,
+  para o pedido ficar na conta dele.
 """
 
 from __future__ import annotations
@@ -117,6 +118,9 @@ def _headers() -> dict[str, str]:
         headers["traceparent"] = ctx["traceparent"]
     if ctx.get("conversation_id"):
         headers["X-Conversation-Id"] = ctx["conversation_id"]
+    token = context.auth_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     return headers
 
 

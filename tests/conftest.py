@@ -38,6 +38,7 @@ def app_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "BACKEND_URL": "http://backend.test",
         "GEMINI_API_KEY": "",
         "GROQ_API_KEY": "",
+        "AUTH_JWT_SECRET": "segredo-de-teste-com-mais-de-trinta-e-dois-bytes",
     }.items():
         monkeypatch.setenv(key, value)
     _reset()

@@ -10,8 +10,12 @@ Uma partição por conversa, com itens distinguidos pela sort key:
   ele que dá contexto ao "sim": o vendedor sabe a que pergunta o "sim" responde.
 * `REQ#<request_id>` — resposta armazenada, para idempotência da requisição.
 * `RATE#<minuto>` — contador do rate limit.
+* `META` — a conta dona da conversa, quando há login.
 
-Tudo com TTL: a conversa some sozinha depois de 7 dias.
+Mensagens, estado e dono são permanentes. Só `REQ#` e `RATE#` têm TTL.
+
+Para listar as conversas de uma conta sem criar índice, cada conta tem a própria
+partição, `USER#<user_id>`, com um item `CONV#<conversation_id>` por conversa.
 """
 
 from __future__ import annotations
@@ -26,6 +30,9 @@ from botocore.exceptions import ClientError
 from app.adapters.aws import dynamodb_resource
 from app.shared import faults
 from app.shared.config import settings
+
+TITLE_MAX_CHARS = 80
+PREVIEW_MAX_CHARS = 160
 
 
 def now_iso() -> str:
@@ -64,8 +71,8 @@ def _table() -> Any:
 
 
 class ConversationRepository:
-    def _ttl(self) -> int:
-        return _epoch(settings().conversation_ttl_days * 86400)
+    def _request_ttl(self) -> int:
+        return _epoch(settings().request_ttl_days * 86400)
 
     # --- mensagens ---
 
@@ -77,7 +84,6 @@ class ConversationRepository:
             "sk": f"MSG#{now_iso()}#{index:04d}",
             "role": role,
             "content": content,
-            "expires_at": self._ttl(),
             **{k: _clean(v) for k, v in extra.items() if v is not None},
         }
         _table().put_item(Item=item)
@@ -108,9 +114,69 @@ class ConversationRepository:
                 "sk": "STATE",
                 "state": _clean(state),
                 "updated_at": now_iso(),
-                "expires_at": self._ttl(),
             }
         )
+
+    # --- dono da conversa e lista por conta ---
+
+    def owner(self, conversation_id: str) -> str | None:
+        response = _table().get_item(
+            Key={"conversation_id": conversation_id, "sk": "META"}, ConsistentRead=True
+        )
+        item = response.get("Item")
+        return item["user_id"] if item else None
+
+    def claim(self, conversation_id: str, user_id: str) -> str:
+        """Dá a conversa à conta, se ainda não tiver dono. Devolve o dono atual."""
+        try:
+            _table().put_item(
+                Item={"conversation_id": conversation_id, "sk": "META", "user_id": user_id,
+                      "created_at": now_iso()},
+                ConditionExpression="attribute_not_exists(sk)",
+            )
+            return user_id
+        except ClientError as exc:
+            if exc.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
+        return self.owner(conversation_id) or user_id
+
+    def index_for_user(
+        self, user_id: str, conversation_id: str, *, title: str, last_message: str, stage: str
+    ) -> None:
+        now = now_iso()
+        _table().update_item(
+            Key={"conversation_id": f"USER#{user_id}", "sk": f"CONV#{conversation_id}"},
+            UpdateExpression=(
+                "SET title = if_not_exists(title, :title), "
+                "created_at = if_not_exists(created_at, :now), "
+                "updated_at = :now, last_message = :last, stage = :stage"
+            ),
+            ExpressionAttributeValues={
+                ":title": title[:TITLE_MAX_CHARS], ":now": now,
+                ":last": last_message[:PREVIEW_MAX_CHARS], ":stage": stage,
+            },
+        )
+
+    def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
+        """Conversas da conta, da mais recente para a mais antiga."""
+        items: list[dict[str, Any]] = []
+        kwargs: dict[str, Any] = {
+            "KeyConditionExpression": "conversation_id = :pk AND begins_with(sk, :prefix)",
+            "ExpressionAttributeValues": {":pk": f"USER#{user_id}", ":prefix": "CONV#"},
+        }
+        while True:
+            page = _table().query(**kwargs)
+            items.extend(to_plain(i) for i in page.get("Items", []))
+            if "LastEvaluatedKey" not in page:
+                break
+            kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+        items.sort(key=lambda i: i["updated_at"], reverse=True)
+        return [
+            {"conversation_id": i["sk"].removeprefix("CONV#"), "title": i["title"],
+             "last_message": i["last_message"], "stage": i["stage"],
+             "created_at": i["created_at"], "updated_at": i["updated_at"]}
+            for i in items
+        ]
 
     # --- idempotência da requisição (PLANO §5.2) ---
 
@@ -131,7 +197,7 @@ class ConversationRepository:
                 "sk": f"REQ#{request_id}",
                 "response": _clean(response),
                 "created_at": now_iso(),
-                "expires_at": self._ttl(),
+                "expires_at": self._request_ttl(),
             }
         )
 
@@ -143,7 +209,7 @@ class ConversationRepository:
                     "conversation_id": conversation_id,
                     "sk": f"REQ#{request_id}",
                     "created_at": now_iso(),
-                    "expires_at": self._ttl(),
+                    "expires_at": self._request_ttl(),
                 },
                 ConditionExpression="attribute_not_exists(sk)",
             )

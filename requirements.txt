@@ -4,3 +4,4 @@ pydantic==2.10.4
 boto3==1.43.124
 httpx==0.28.1
 openai==1.59.6
+PyJWT==2.10.1
