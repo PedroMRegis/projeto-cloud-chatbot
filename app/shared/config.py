@@ -24,7 +24,10 @@ def _env_float(name: str, default: float) -> float:
 @dataclass(frozen=True)
 class Settings:
     env: str = field(default_factory=lambda: _env("APP_ENV", "local"))
-    region: str = field(default_factory=lambda: _env("AWS_REGION", "us-east-2"))
+    # Sem região padrão. Em None, o boto3 procura AWS_DEFAULT_REGION ou a região
+    # do perfil da AWS CLI e falha (NoRegionError) se não achar. Um padrão fixo
+    # faria um ambiente de outra região falar com Ohio em silêncio.
+    region: str | None = field(default_factory=lambda: os.environ.get("AWS_REGION") or None)
     service_name: str = field(default_factory=lambda: _env("SERVICE_NAME", "chatbot"))
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO"))
 
