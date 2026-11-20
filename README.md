@@ -10,7 +10,7 @@ reais** do backend.
 | [projeto-cloud-backend](https://github.com/PedroMRegis/projeto-cloud-backend) | `backend-api`, `order-worker` | Catálogo, cotação, pedido, confirmação assíncrona |
 | **projeto-cloud-chatbot** (este) | `chatbot` | Vendedor conversacional |
 | [projeto-cloud-frontend](https://github.com/PedroMRegis/projeto-cloud-frontend) | `frontend` | Loja em React |
-| [projeto-cloud-insper](https://github.com/joselsm3/projeto-cloud-insper) | — | Plano, infraestrutura, docs e compose da plataforma |
+| [projeto-cloud-terraform](https://github.com/TheoRibeiroFranca/projeto-cloud-terraform) | — | Plano, infraestrutura, docs e compose da plataforma |
 
 ## O que mudou em relação à versão anterior
 
