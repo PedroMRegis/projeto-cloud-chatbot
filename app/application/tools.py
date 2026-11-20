@@ -124,10 +124,19 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_order_status",
-            "description": "Consulta a situação de um pedido já registrado.",
+            "description": (
+                "Consulta a situação de um pedido já registrado, inclusive de outra "
+                "conversa. Para pedido de conta, o cliente precisa estar logado."
+            ),
             "parameters": {
                 "type": "object",
-                "properties": {"order_id": {"type": "string"}},
+                "properties": {"order_id": {
+                    "type": "string",
+                    "description": (
+                        "Número do pedido como o cliente informou: o curto que a loja "
+                        "mostra (8 caracteres, como 8F3A2C1D) ou o completo."
+                    ),
+                }},
                 "required": ["order_id"],
             },
         },

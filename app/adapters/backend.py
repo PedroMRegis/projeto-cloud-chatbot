@@ -22,6 +22,7 @@ import random
 import threading
 import time
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -199,7 +200,8 @@ def place_order(quote_id: str, conversation_id: str) -> dict[str, Any]:
 
 
 def get_order(order_id: str, conversation_id: str) -> dict[str, Any]:
-    return request("GET", f"/api/orders/{order_id}",
+    # O cliente pode escrever "#8F3A2C1D": sem codificar, o "#" cortaria a URL.
+    return request("GET", f"/api/orders/{quote(order_id.strip(), safe='')}",
                    params={"conversation_id": conversation_id})
 
 
