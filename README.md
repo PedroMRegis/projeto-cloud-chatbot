@@ -10,7 +10,7 @@ reais** do backend.
 | [projeto-cloud-backend](https://github.com/PedroMRegis/projeto-cloud-backend) | `backend-api`, `order-worker` | Catálogo, cotação, pedido, confirmação assíncrona |
 | **projeto-cloud-chatbot** (este) | `chatbot` | Vendedor conversacional |
 | [projeto-cloud-frontend](https://github.com/PedroMRegis/projeto-cloud-frontend) | `frontend` | Loja em React |
-| [projeto-cloud-terraform](https://github.com/TheoRibeiroFranca/projeto-cloud-terraform) | — | terraform para são paulo|
+| [projeto-cloud-terraform](https://github.com/TheoRibeiroFranca/projeto-cloud-terraform) | — | Infraestrutura de São Paulo (`sa-east-1`) em Terraform |
 
 ## O que mudou em relação à versão anterior
 
@@ -24,12 +24,16 @@ idle ──busca──► browsing ──escolhe──► product ──quantida
   ▲                                     │                            │ "sim"
   │                                     ◄──────── "não"/outras ──────┤
   │                                                                  ▼
-  └──────────── comprar outro ◄────── ordered ◄──── nome ──── awaiting_name
+  └──────────── comprar outro ◄────── ordered ◄──── "sim", com login ┘
 ```
 
 O mesmo "sim" significa "quero esse livro" na etapa `product` e "pode fechar" na
-etapa `quoted`. Cada etapa devolve também **sugestões clicáveis** (com uma
-`action` estruturada), e o cliente pode comprar só clicando. Texto livre continua
+etapa `quoted`. O vendedor nunca pergunta o nome: fechar o pedido exige login, e
+o nome vem da conta. Sem login, a resposta traz `login_required` e o frontend
+mostra o botão de entrar; a conversa e a cotação continuam lá depois do login.
+
+Cada etapa devolve também **sugestões clicáveis** (com uma `action`
+estruturada), e o cliente pode comprar só clicando. Texto livre continua
 funcionando.
 
 ## Três modos de atender
@@ -38,7 +42,7 @@ funcionando.
 |---|---|---|
 | Botão (`action`) | Vendedor guiado (`seller.py`) | Sem ambiguidade. Funciona até com o LLM fora do ar |
 | Texto, `LLM_PROVIDER=mock` | Vendedor guiado, interpretando o texto pela etapa | Sem custo de LLM; usado em teste de carga |
-| Texto, `LLM_PROVIDER=bedrock`/`gemini`/`groq` | LLM com tool calling (`agent.py`) | Recebe histórico **e** um resumo do estado (livro em foco, `quote_id`, nome) |
+| Texto, `LLM_PROVIDER=bedrock`/`gemini`/`groq` | LLM com tool calling (`agent.py`) | Recebe histórico **e** um resumo do estado (livro em foco, `quote_id`, nome da conta) |
 
 As tools (`search_products`, `get_product`, `check_availability`,
 `create_quote`, `confirm_order`, `get_order_status`) são chamadas HTTP ao
@@ -63,14 +67,28 @@ Uma partição por conversa (`conversation_id`), com itens pela sort key:
 | `STATE` | Estado da sessão de venda |
 | `REQ#<request_id>` | Resposta guardada (idempotência) |
 | `RATE#<minuto>` | Contador do rate limit |
+| `META` | A conta dona da conversa, quando há login |
 
-Tudo tem TTL de 7 dias.
+Para listar as conversas de uma conta sem índice, cada conta tem a própria
+partição `USER#<user_id>`, com um item `CONV#<conversation_id>` por conversa.
+
+Mensagens, estado e dono são permanentes. Só `REQ#` (7 dias, `REQUEST_TTL_DAYS`)
+e `RATE#` (3 minutos) têm TTL.
+
+## Contas
+
+O chatbot valida o mesmo JWT do backend (cookie `cirro_session`), com o mesmo
+`AUTH_JWT_SECRET`, sem chamar o backend, e repassa a sessão ao backend em
+`Authorization: Bearer`. Visitante conversa e cota; o pedido exige login.
+Quando uma conta escreve numa conversa, ela passa a ser a dona: a partir daí,
+só essa conta lê ou continua a conversa.
 
 ## API
 
 | Rota | O que faz |
 |---|---|
-| `POST /api/chat` | `{message, request_id, conversation_id?, action?}` → resposta + `products`, `quote`, `order`, `suggestions`, `input_hint`, `stage` |
+| `POST /api/chat` | `{message, request_id, conversation_id?, action?}` → resposta + `products`, `quote`, `order`, `suggestions`, `input_hint`, `stage`, `login_required` |
+| `GET /api/conversations` | Conversas da conta logada (exige login) |
 | `GET /api/conversations/{id}` | Histórico com o `ui` de cada resposta, além do estado e das sugestões atuais |
 | `POST /api/conversations/{id}/start` | Sugestões iniciais, sem gastar um turno |
 | `GET /health` / `GET /ready` | Vivo / dependências (DynamoDB e backend) |
@@ -82,7 +100,9 @@ docker compose up -d --build     # DynamoDB Local + chatbot (precisa do backend 
 ```
 
 Para usar um LLM real, copie `.env.example` para `.env` e preencha as chaves. Para a
-plataforma inteira, use o compose do `projeto-cloud-insper`.
+plataforma inteira em local, suba também o compose do
+[backend](https://github.com/PedroMRegis/projeto-cloud-backend) e rode o
+[frontend](https://github.com/PedroMRegis/projeto-cloud-frontend) com `npm run dev`.
 
 ### Bedrock
 
@@ -107,7 +127,7 @@ com `AWS_PROFILE` definido.
 
 ```bash
 python -m venv .venv && .venv/Scripts/pip install -r requirements-dev.txt   # Windows
-.venv/Scripts/python -m pytest      # 67 testes, sem AWS e sem Docker (moto + backend falso)
+.venv/Scripts/python -m pytest      # 101 testes, sem AWS e sem Docker (moto + backend falso)
 .venv/Scripts/python -m ruff check .
 ```
 
